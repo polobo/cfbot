@@ -9,7 +9,7 @@ MOUNTED_DIR=patchburner_docker
 
 usage()
 {
-  echo "Usage: $1 init|create|apply|destroy"
+  echo "Usage: $1 init-template|create|apply|destroy"
   echo
   echo "init-template -- create 'patchburner_template'"
   echo
