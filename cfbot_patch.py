@@ -15,6 +15,7 @@
 import cfbot_commitfest_rpc
 import cfbot_config
 import cfbot_util
+import json
 import logging
 import os
 import re
@@ -72,7 +73,7 @@ def need_to_limit_rate(conn):
     return row and row[0] >= cfbot_config.CONCURRENT_BUILDS
 
 
-def choose_submission_with_new_patch(conn, min_commitfest_id):
+def choose_submission_with_new_patch(conn, workflow):
     """Return the ID pair for the submission most deserving, because it has been
     waiting the longest amongst submissions that have a new patch
     available."""
@@ -83,25 +84,27 @@ def choose_submission_with_new_patch(conn, min_commitfest_id):
     # -- wait a couple of minutes before probing because the archives are slow!
     cursor = conn.cursor()
     cursor.execute(
-        """SELECT commitfest_id, submission_id
+        """SELECT submission_id
                       FROM submission
                      WHERE last_message_id IS NOT NULL
                        AND last_message_id IS DISTINCT FROM last_branch_message_id
-                       AND status IN ('Ready for Committer', 'Needs review', 'Waiting on Author')
-                       AND commitfest_id >= %s
+                       AND status IN ('1', '2', '3', 'Ready for Committer', 'Needs review', 'Waiting on Author')
+                       AND commitfest_id IN (%s,%s,%s)
                        AND submission_id NOT IN (4431, 4365) -- Joe!
                   ORDER BY last_email_time
                      LIMIT 1""",
-        (min_commitfest_id,),
+        (workflow["open"]["id"],
+         workflow["inprogress"]["id"],
+         workflow["parked"]["id"]),
     )
     row = cursor.fetchone()
     if row:
         return row
     else:
-        return None, None
+        return (None,)
 
 
-def choose_submission_without_new_patch(conn, min_commitfest_id):
+def choose_submission_without_new_patch(conn, workflow):
     """Return the ID pair for the submission that has been waiting longest for
     a periodic bitrot check, but only if we're under the configured rate per
     hour (which is expressed as the cycle time to get through all
@@ -112,10 +115,12 @@ def choose_submission_without_new_patch(conn, min_commitfest_id):
         """SELECT COUNT(*)
                       FROM submission
                      WHERE last_message_id IS NOT NULL
-                       AND commitfest_id >= %s
+                       AND commitfest_id IN (%s,%s,%s)
                        AND (backoff_until IS NULL OR now() >= backoff_until)
-                       AND status IN ('Ready for Committer', 'Needs review', 'Waiting on Author')""",
-        (min_commitfest_id,),
+                       AND status IN ('1', '2', '3', 'Ready for Committer', 'Needs review', 'Waiting on Author')""",
+        (workflow["open"]["id"],
+         workflow["inprogress"]["id"],
+         workflow["parked"]["id"]),
     )
     (number,) = cursor.fetchone()
     # how many will we need to do per hour to approximate our target rate?
@@ -125,47 +130,51 @@ def choose_submission_without_new_patch(conn, min_commitfest_id):
         """SELECT COUNT(*)
                       FROM submission
                      WHERE last_message_id IS NOT NULL
-                       AND commitfest_id >= %s
-                       AND status IN ('Ready for Committer', 'Needs review', 'Waiting on Author')
+                       AND commitfest_id IN (%s,%s,%s)
+                       AND status IN ('1', '2', '3', 'Ready for Committer', 'Needs review', 'Waiting on Author')
                        AND last_branch_time > now() - INTERVAL '1 hour'""",
-        (min_commitfest_id,),
+        (workflow["open"]["id"],
+         workflow["inprogress"]["id"],
+         workflow["parked"]["id"]),
     )
     (current_rate_per_hour,) = cursor.fetchone()
     # is it time yet?
     if current_rate_per_hour < target_per_hour:
         cursor.execute(
-            """SELECT commitfest_id, submission_id
+            """SELECT submission_id
                         FROM submission
                        WHERE last_message_id IS NOT NULL
-                         AND commitfest_id >= %s
+                         AND commitfest_id  IN (%s,%s,%s)
                          AND (backoff_until IS NULL OR now() >= backoff_until)
-                         AND status IN ('Ready for Committer', 'Needs review', 'Waiting on Author')
+                         AND status IN ('1', '2', '3', 'Ready for Committer', 'Needs review', 'Waiting on Author')
                          AND submission_id NOT IN (4431, 4365) -- Joe!
                     ORDER BY last_branch_time NULLS FIRST
                        LIMIT 1""",
-            (min_commitfest_id,),
+            (workflow["open"]["id"],
+             workflow["inprogress"]["id"],
+             workflow["parked"]["id"]),
         )
         row = cursor.fetchone()
         if row:
             return row
         else:
-            return None, None
+            return (None,)
     else:
-        return None, None
+        return (None,)
 
 
-def choose_submission(conn, min_commitfest_id):
+def choose_submission(conn, workflow):
     """Choose the best submission to process, giving preference to new
     patches."""
-    commitfest_id, submission_id = choose_submission_with_new_patch(
-        conn, min_commitfest_id
+    submission_id = choose_submission_with_new_patch(
+        conn, workflow
     )
     if submission_id:
-        return commitfest_id, submission_id
-    commitfest_id, submission_id = choose_submission_without_new_patch(
-        conn, min_commitfest_id
+        return submission_id
+    submission_id = choose_submission_without_new_patch(
+        conn, workflow
     )
-    return commitfest_id, submission_id
+    return submission_id
 
 
 def update_patchbase_tree(repo_dir):
@@ -468,6 +477,15 @@ def maybe_process_one(conn, min_commitfest_id):
         logging.info(
             "rate limiting in effect, see CONCURRENT_BUILDS in cfbot_config.py"
         )
+
+
+def choose_next_from_workflow(conn, workflow):
+    submission_id = choose_submission(conn, workflow)
+    for bucket in ["open", "inprogress", "parked"]:
+        for submission in workflow[bucket]["submissions"]:
+            if submission["id"] == submission_id:
+                return submission
+    return None
 
 
 if __name__ == "__main__":

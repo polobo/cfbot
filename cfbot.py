@@ -50,10 +50,10 @@ def run():
         cfbot_commitfest.pull_modified_threads(conn)
 
         # build one patch, if it is time for that
-        cfbot_patch.maybe_process_one(conn, workflow)
+        submission = cfbot_patch.maybe_process_one(conn, workflow)
 
         # rebuild a new set of web pages
-        cfbot_web.rebuild(conn, workflow)
+        cfbot_web.rebuild(conn, submission)
 
         # garbage collect old build results
         cfbot_util.gc(conn)

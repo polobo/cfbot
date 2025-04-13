@@ -12,9 +12,8 @@ import json
 import logging
 
 def record_submissions(conn, submissions):
-    """Fetch the list of submissions and make sure we have a row for each one.
-    Update the last email time according to the Commitfest main page,
-    as well as name, status, authors in case they changed."""
+    """Ensure that our database of Submissions reflects the current state
+    of the patches in the submissions list."""
     cursor = conn.cursor()
     for submission in submissions:
         # avoid writing for nothing by doing a read query first
