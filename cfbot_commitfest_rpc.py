@@ -31,6 +31,24 @@ class Submission:
             [self.id, self.name, self.status, self.authors, self.last_email_time]
         )
 
+def get_latest_attachments_for_submission(submission):
+    if not submission:
+        return []
+
+    best_message = None
+    for thread in submission["threads"]:
+        for message in thread["patch_messages"]:
+            if not best_message:
+                best_message = message
+                continue
+            if message["message_date"] > best_message["message_date"]:
+                best_message = message
+
+    if not best_message:
+        return []
+
+    return best_message["attach_files"]
+
 
 def get_latest_patches_from_thread_url(thread_url):
     """Given a 'whole thread' URL from the archives, find the last message that
@@ -71,12 +89,12 @@ def get_latest_patches_from_thread_url(thread_url):
     return selected_message_id, selected_message_attachments
 
 
-def get_thread_url_for_submission(commitfest_id, submission_id):
+def get_thread_url_for_submission(submission):
     """Given a Commitfest ID and a submission ID, return the URL of the 'whole
     thread' page in the mailing list archives."""
     # find all the threads and latest message times
     result = None
-    url = f"{cfbot_config.COMMITFEST_HOST}/patch/{submission_id}/"
+    url = f"{cfbot_config.COMMITFEST_HOST}/patch/{submission["id"]}/"
     candidates = []
     candidate = None
     for line in cfbot_util.slow_fetch(url).splitlines():
@@ -105,21 +123,6 @@ def retrieve_cf_submission_list(commitfest_id):
     return json.loads(result)
 
 
-def get_current_commitfest_id():
-    """Find the ID of the current open or next future Commitfest."""
-    result = None
-    for line in cfbot_util.slow_fetch(cfbot_config.COMMITFEST_HOST).splitlines():
-        groups = re.search(
-            '<a href="/([0-9]+)/">[0-9]+-[0-9]+</a> \((Open|In Progress) ', line
-        )
-        if groups:
-            commitfest_id = groups.group(1)
-            groups.group(2)
-            result = int(commitfest_id)
-    if result is None:
-        raise Exception("Could not determine the current Commitfest ID")
-    return result
-
 def get_commitfest_workflow():
     result = cfbot_util.slow_fetch(cfbot_config.COMMITFEST_HOST + "/api/v1/commitfest/open")
     jsonobj = json.loads(result)
@@ -131,7 +134,6 @@ def get_commitfest_workflow():
     if not workflow["inprogress"]:
         workflow["inprogress"]["id"] = None
 
-    workflow["parked"] = {}
     if not workflow["parked"]:
         workflow["parked"]["id"] = None
 

@@ -536,7 +536,6 @@ def unique_authors(submissions):
 if __name__ == "__main__":
     with cfbot_util.db() as conn:
         # rebuild(conn, commitfest_id)
-        # commitfest_id = cfbot_commitfest_rpc.get_current_commitfest_id()
         submissions = load_submissions(conn, 42)
         build_page(
             conn,

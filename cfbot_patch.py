@@ -314,43 +314,32 @@ def update_submission(conn, message_id, commit_id, commitfest_id, submission_id)
     )
 
 
-def process_submission(conn, commitfest_id, submission_id):
+def process_submission(conn, submission):
     cursor = conn.cursor()
+    if len(submission["threads"]) == 0:
+        update_submission(conn, None, None, submission)
+        conn.commit()
+        logging.info("skipping submission %s with no thread" % submission["id"])
+        return
+
     template_repo_path = patchburner_ctl("template-repo-path").strip()
     burner_repo_path = patchburner_ctl("burner-repo-path").strip()
     patch_dir = patchburner_ctl("burner-patch-path").strip()
     # print "got %s" % update_patchbase_tree()
     update_patchbase_tree(template_repo_path)
     commit_id = get_commit_id(template_repo_path)
-    logging.info("processing submission %d, %d" % (commitfest_id, submission_id))
+    logging.info("processing submission %d" % (submission["id"]))
     # create a fresh patchburner jail
     patchburner_ctl("destroy")
     patchburner_ctl("create")
     # find out where to put the patches so the jail can see them
     # fetch the patches from the thread and put them in the patchburner's
     # filesystem
-    time.sleep(10)  # argh, try to close race against slow archives
 
-    try:
-        thread_url = cfbot_commitfest_rpc.get_thread_url_for_submission(
-            commitfest_id, submission_id
-        )
-    except requests.exceptions.HTTPError as e:
-        # We've seen some 404's here, probably due to a previously existing entry
-        # being deleted.
-        if e.response.status_code == 404:
-            thread_url = None
-        else:
-            raise
-
-    if not thread_url:
-        # CF entry with no thread attached?
-        update_submission(conn, None, None, commitfest_id, submission_id)
-        conn.commit()
-        logging.info("skipping submission %s with no thread" % submission_id)
-        return
-    message_id, patch_urls = cfbot_commitfest_rpc.get_latest_patches_from_thread_url(
-        thread_url
+    submission_id = submission["id"]
+    commitfest_id = submission["commitfest_id"]
+    message_id, patch_urls = cfbot_commitfest_rpc.get_latest_attachments_for_submission(
+        submission
     )
     version = None
     for patch_url in patch_urls:
@@ -481,6 +470,7 @@ def maybe_process_one(conn, min_commitfest_id):
 
 def choose_next_from_workflow(conn, workflow):
     submission_id = choose_submission(conn, workflow)
+    submission_id = 8
     for bucket in ["open", "inprogress", "parked"]:
         for submission in workflow[bucket]["submissions"]:
             if submission["id"] == submission_id:
