@@ -11,15 +11,12 @@ import json
 
 import logging
 
-
-def pull_submissions(conn, commitfest_id):
+def record_submissions(conn, submissions):
     """Fetch the list of submissions and make sure we have a row for each one.
     Update the last email time according to the Commitfest main page,
     as well as name, status, authors in case they changed."""
     cursor = conn.cursor()
-    for submission in cfbot_commitfest_rpc.get_submissions_for_commitfest(
-        commitfest_id
-    ):
+    for submission in submissions:
         # avoid writing for nothing by doing a read query first
         cursor.execute(
             """SELECT *
@@ -31,12 +28,12 @@ def pull_submissions(conn, commitfest_id):
                          AND authors = %s
                          AND last_email_time = %s AT TIME ZONE 'UTC'""",
             (
-                commitfest_id,
-                submission.id,
-                submission.name,
-                submission.status,
-                submission.authors,
-                submission.last_email_time,
+                submission["commitfest_id"],
+                submission["id"],
+                submission["name"],
+                submission["status"],
+                submission["authors"],
+                submission["last_email_time"],
             ),
         )
         if cursor.fetchone():
@@ -58,12 +55,12 @@ def pull_submissions(conn, commitfest_id):
                           last_email_time = EXCLUDED.last_email_time,
                           backoff_until = NULL""",
             (
-                commitfest_id,
-                submission.id,
-                submission.name,
-                submission.status,
-                submission.authors,
-                submission.last_email_time,
+                submission["commitfest_id"],
+                submission["id"],
+                submission["name"],
+                submission["status"],
+                submission["authors"],
+                submission["last_email_time"],
             ),
         )
         conn.commit()

@@ -12,6 +12,7 @@ import cfbot_web
 import errno
 import fcntl
 import logging
+import json
 import requests
 
 
@@ -30,9 +31,6 @@ def try_lock():
 
 def run():
     with cfbot_util.db() as conn:
-        # get the current Commitfest ID
-        commitfest_id = cfbot_commitfest_rpc.get_current_commitfest_id()
-
         # pull in any build results that we are waiting for
         # XXX would need to aggregate the 'keep_polling' flag if we went
         # back to supporting multiple providers, or do something smarter,
@@ -40,19 +38,22 @@ def run():
         # webhooks, not bothering for now
         cfbot_cirrus.pull_build_results(conn)
 
-        # exchange data with the Commitfest app
-        logging.info("pulling submissions for current commitfest")
-        cfbot_commitfest.pull_submissions(conn, commitfest_id)
-        logging.info("pulling submissions for next commitfest")
-        cfbot_commitfest.pull_submissions(conn, commitfest_id + 1)
+        # Download Commitfest data for all open buckets
+        workflow = cfbot_commitfest_rpc.get_commitfest_workflow()
+        for bucket in ["open", "inprogress", "parked"]:
+            logging.info("getting submissions for {} commitfest" % (bucket))
+            workflow[bucket]["submissions"] = cfbot_commitfest_rpc.retrieve_cf_submission_list(workflow[bucket]["id"])
+            logging.info("saving submissions for {} commitfest" % (bucket))
+            cfbot_commitfest.record_submissions(conn, workflow[bucket]["submissions"])
+
         logging.info("pulling modified threads")
         cfbot_commitfest.pull_modified_threads(conn)
 
         # build one patch, if it is time for that
-        cfbot_patch.maybe_process_one(conn, commitfest_id)
+        cfbot_patch.maybe_process_one(conn, workflow)
 
         # rebuild a new set of web pages
-        cfbot_web.rebuild(conn, commitfest_id)
+        cfbot_web.rebuild(conn, workflow)
 
         # garbage collect old build results
         cfbot_util.gc(conn)

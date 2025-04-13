@@ -97,82 +97,12 @@ def get_thread_url_for_submission(commitfest_id, submission_id):
     return result
 
 
-def get_submissions_for_commitfest(commitfest_id):
-    """Given a Commitfest ID, return a list of Submission objects."""
-    result = []
-    # parser = HTMLParser()
-    url = f"{cfbot_config.COMMITFEST_HOST}/{commitfest_id}/"
-    next_line_has_version = False
-    next_line_has_latest_email = False
-    state = None
-    latest_email = None
-    authors = ""
-    td_count = 0
-    body = cfbot_util.slow_fetch(url, True)
-    if body == None:
+def retrieve_cf_submission_list(commitfest_id):
+    if commitfest_id is None:
         return []
-    for line in body.splitlines():
-        # maybe it's easier to count rows and columns
-        if re.search("<tr>", line):
-            td_count = 0
-            continue
-        if re.search("<td>", line):
-            td_count += 1
 
-        groups = re.search('<a href="/patch/([0-9]+)/">([^<]+)</a>', line)
-        if groups:
-            submission_id = groups.group(1)
-            name = html.unescape(groups.group(2))
-            continue
-        if next_line_has_version:
-            next_line_has_version = False
-            continue
-        if td_count == 6:
-            groups = re.search("<td>([^<]*)</td>", line)
-            if groups:
-                authors = groups.group(1)
-                authors = re.sub(" *\\([^)]*\\)", "", authors)
-                continue
-        if next_line_has_latest_email:
-            next_line_has_latest_email = False
-            groups = re.search(
-                '<td style="white-space: nowrap;">(.*)<br/>(.*)</td>', line
-            )
-            if groups:
-                latest_email = groups.group(1) + " " + groups.group(2)
-                if latest_email == " ":
-                    latest_email = None
-                result.append(
-                    Submission(
-                        submission_id,
-                        commitfest_id,
-                        name,
-                        state,
-                        authors.split(", "),
-                        latest_email,
-                    )
-                )
-        groups = re.search(
-            '<td><span class="label label-[^"]*">([^<]+)</span></td>', line
-        )
-        if groups:
-            state = groups.group(1)
-            next_line_has_version = True
-            continue
-        groups = re.search('<td style="white-space: nowrap;" title="([^"]+)">', line)
-        if groups:
-            latest_email = groups.group(1)
-            result.append(
-                Submission(
-                    submission_id,
-                    commitfest_id,
-                    name,
-                    state,
-                    authors.split(", "),
-                    latest_email,
-                )
-            )
-    return result
+    result = cfbot_util.slow_fetch(cfbot_config.COMMITFEST_HOST + "/api/v1/commitfest/%s" % (commitfest_id))
+    return json.loads(result)
 
 
 def get_current_commitfest_id():
@@ -193,11 +123,16 @@ def get_current_commitfest_id():
 def get_commitfest_workflow():
     result = cfbot_util.slow_fetch(cfbot_config.COMMITFEST_HOST + "/api/v1/commitfest/open")
     jsonobj = json.loads(result)
-    jsonobj["workflow"]["parked"] = None
-    return jsonobj["workflow"]
+    workflow = jsonobj["workflow"]
 
-if __name__ == "__main__":
-    for sub in get_submissions_for_commitfest(get_current_commitfest_id()):
-        print(str(sub))
-    #    print get_thread_url_for_submission(19, 1787)
-    # print(get_latest_patches_from_thread_url(get_thread_url_for_submission(37, 2901)))
+    if not workflow["open"]:
+        workflow["open"]["id"] = None
+
+    if not workflow["inprogress"]:
+        workflow["inprogress"]["id"] = None
+
+    workflow["parked"] = {}
+    if not workflow["parked"]:
+        workflow["parked"]["id"] = None
+
+    return workflow

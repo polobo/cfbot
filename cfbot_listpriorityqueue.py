@@ -16,18 +16,11 @@ import cfbot_util
 
 def run():
     with cfbot_util.db() as conn:
-        # get the current Commitfest ID
         workflow = cfbot_commitfest_rpc.get_commitfest_workflow()
-        print(json.dumps(workflow["open"], indent=2))
-        print(json.dumps(workflow["inprogress"], indent=2))
-        print(json.dumps(workflow["parked"], indent=2))
-        print(workflow["open"])
-        print(workflow["inprogress"])
-        print(workflow["parked"])
-        #cfbot_commitfest.pull_submissions(conn, workflow["open"])
-        #cfbot_commitfest.pull_submissions(conn, workflow["inprogress"])
-        #cfbot_commitfest.pull_submissions(conn, workflow["parked"])
-
+        for bucket in ["open", "inprogress", "parked"]:
+            workflow[bucket]["submissions"] = cfbot_commitfest_rpc.retrieve_cf_submission_list(workflow[bucket]["id"])
+            print(json.dumps(workflow[bucket], indent=2))
+            cfbot_commitfest.record_submissions(conn, workflow[bucket]["submissions"])
     return 0
 
 if __name__ == "__main__":
