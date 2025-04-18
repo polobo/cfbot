@@ -41,7 +41,7 @@ ALTER TABLE public.artifact OWNER TO cfbot;
 
 CREATE TABLE public.branch (
     id integer NOT NULL,
-    commitfest_id integer NOT NULL,
+    commitfest_id integer NULL,
     submission_id integer NOT NULL,
     commit_id text,
     status text NOT NULL,
@@ -329,22 +329,6 @@ CREATE INDEX task_commit_id_idx ON public.task USING btree (commit_id);
 --
 
 CREATE INDEX task_submission_id_idx ON public.task USING btree (submission_id);
-
-
---
--- Name: branch branch_commitfest_id_submission_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: cfbot
---
-
-ALTER TABLE ONLY public.branch
-    ADD CONSTRAINT branch_commitfest_id_submission_id_fkey FOREIGN KEY (commitfest_id, submission_id) REFERENCES public.submission(commitfest_id, submission_id);
-
-
---
--- Name: task build_result_commitfest_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: cfbot
---
-
-ALTER TABLE ONLY public.task
-    ADD CONSTRAINT build_result_commitfest_id_fkey FOREIGN KEY (commitfest_id, submission_id) REFERENCES public.submission(commitfest_id, submission_id);
 
 
 --

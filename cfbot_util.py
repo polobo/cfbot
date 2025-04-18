@@ -71,4 +71,4 @@ def gc(conn):
 
 def db():
     """Get a database connection."""
-    return pg8000.connect(cfbot_config.DSN)
+    return pg8000.connect(**cfbot_config.DSN)

@@ -305,6 +305,140 @@ def update_submission(conn, message_id, commit_id, commitfest_id, submission_id)
     )
 
 
+def process_patch(conn, patch, force_success=False):
+    template_repo_path = patchburner_ctl("template-repo-path").strip()
+    burner_repo_path = patchburner_ctl("burner-repo-path").strip()
+    patch_dir = patchburner_ctl("burner-patch-path").strip()
+    if force_success:
+        commit_id = None
+    else:
+        commit_id = get_commit_id(template_repo_path)
+        update_patchbase_tree(template_repo_path)
+        patchburner_ctl("destroy")
+        patchburner_ctl("create")
+
+    if cfbot_config.PRODUCTION:
+        time.sleep(10)  # XXX argh, try to close race against slow archives...
+
+    version = None
+    for file in patch.attachments:
+        if not version and re.match(r"[vV]\d+-", file.filename):
+            version = file.filename.split("-")[0]
+        if force_success:
+            content = cfbot_config.get_fetcher()(patch.message_id, file.filename)
+            print("Fetched %s bytes from %s" % (len(content), file.filename))
+        else:
+            dest = os.path.join(patch_dir, file.filename)
+            with open(dest, "wb+") as f:
+                f.write(cfbot_config.get_fetcher()(file.message_id, file.filename))
+
+
+    cursor = conn.cursor()
+
+    if force_success:
+        branch, output, rcode = (None, "Mock Output", 0)
+    else:
+        # we applied the patch; now make it into a branch with a commit on it
+        branch = make_branch(burner_repo_path, patch.patch_id)
+        # apply the patches inside the jail
+        output, rcode = patchburner_ctl("apply", want_rcode=True)
+
+    # write the patch output to a public log file
+    log_file = f"patch_{patch.patch_id}.log"
+    with open(os.path.join(cfbot_config.WEB_ROOT, log_file), "w+") as f:
+        f.write(
+            "=== Applying patches on top of PostgreSQL commit ID %s ===\n"
+            % (commit_id,)
+        )
+        f.write(output)
+    log_url = cfbot_config.CFBOT_APPLY_URL % log_file
+    # did "patch" actually succeed?
+    if rcode != 0:
+        # we failed to apply the patches
+        logging.info("failed to apply (%s)" % (patch.patch_id))
+        cursor.execute(
+            """INSERT INTO branch (commitfest_id, submission_id, status, url, created, modified) VALUES (%s, %s, 'failed', %s, now(), now()) RETURNING id""",
+            (None, patch.patch_id, log_url),
+        )
+        (branch_id,) = cursor.fetchone()
+        cursor.execute(
+            """INSERT INTO work_queue (type, key, status) VALUES ('post-branch-status', %s, 'NEW')""",
+            (branch_id,),
+        )
+        if not cfbot_config.PRODUCTION:
+            print(output)
+
+    else:
+        logging.info("applied patches for (%s)" % (patch.patch_id))
+        if force_success:
+            first_commit, commit_count = ("some-commit", 1)
+        else:
+            first_commit = capture(
+                "git rev-list --topo-order master..HEAD | tail -n 1", cwd=burner_repo_path
+            ).strip()
+            commit_count = int(
+                capture(
+                    "git rev-list --topo-order master..HEAD | wc -l", cwd=burner_repo_path
+                ).strip()
+            )
+
+        if force_success:
+            first_additions, first_deletions = 1, 1
+            all_additions, all_deletions = 1, 1
+        else:
+            # we committed the patches; now add a final merge commit with some metadata
+            add_merge_commit(
+                conn, burner_repo_path, None, patch.patch_id, patch.message_id, version
+            )
+
+            if commit_count > 0:
+                first_additions, first_deletions = git_shortstat(
+                    burner_repo_path, first_commit
+                )
+                all_additions, all_deletions = git_shortstat(burner_repo_path, "HEAD")
+            else:
+                first_additions, first_deletions = 0, 0
+                all_additions, all_deletions = 0, 0
+
+        # push it to the remote monitored repo, if configured
+        if cfbot_config.GIT_REMOTE_NAME:
+            logging.info("pushing branch %s" % branch)
+            my_env = os.environ.copy()
+            my_env["GIT_SSH_COMMAND"] = cfbot_config.GIT_SSH_COMMAND
+            subprocess.check_call(
+                "cd %s && git push -q -f %s %s"
+                % (burner_repo_path, cfbot_config.GIT_REMOTE_NAME, branch),
+                env=my_env,
+                shell=True,
+                stderr=subprocess.DEVNULL,
+            )
+        # record the apply status
+        if force_success:
+            ci_commit_id = "some-new-commit"
+        else:
+            ci_commit_id = get_commit_id(burner_repo_path)
+
+        cursor.execute(
+            """INSERT INTO branch (commitfest_id, submission_id, commit_id, status, url, created, modified, version, patch_count, first_additions, first_deletions, all_additions, all_deletions) VALUES (%s, %s, %s, 'testing', %s, now(), now(), %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (
+                0,
+                patch.patch_id,
+                ci_commit_id,
+                log_url,
+                version,
+                commit_count,
+                first_additions,
+                first_deletions,
+                all_additions,
+                all_deletions,
+            ),
+        )
+        (branch_id,) = cursor.fetchone()
+        cursor.execute(
+            """INSERT INTO work_queue (type, key, status) VALUES ('post-branch-status', %s, 'NEW')""",
+            (branch_id,),
+        )
+
 def process_submission(conn, commitfest_id, submission_id):
     cursor = conn.cursor()
     template_repo_path = patchburner_ctl("template-repo-path").strip()

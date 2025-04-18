@@ -10,6 +10,7 @@ import json
 
 # from html.parser import HTMLParser
 import re
+from collections import namedtuple
 
 
 class Submission:
@@ -210,8 +211,25 @@ def get_commitfest_workflow():
     return workflow
 
 
+def get_next_patch():
+    """Call the commitfest/get_and_move API endpoint and return a structured named tuple."""
+    result = cfbot_util.slow_fetch(
+        cfbot_config.COMMITFEST_HOST + "/api/v1/cfbot/get_and_move"
+    )
+    jsonobj = json.loads(result)
+
+    Attachment = namedtuple("Attachment", ["attachment_id", "filename"])
+    PatchDetails = namedtuple("PatchDetails", ["patch_id", "message_id", "attachments"])
+
+    returned = jsonobj["returned"]
+    attachments = [
+        Attachment(attachment["attachment_id"], attachment["filename"])
+        for attachment in returned["attachments"]
+    ]
+    return PatchDetails(returned["patch_id"], returned["message_id"], attachments)
+
+
 if __name__ == "__main__":
     for sub in get_submissions_for_commitfest(get_current_commitfest_id()):
         print(str(sub))
-    #    print get_thread_url_for_submission(19, 1787)
-    # print(get_latest_patches_from_thread_url(get_thread_url_for_submission(37, 2901)))
+

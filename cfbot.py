@@ -37,41 +37,18 @@ def run():
         # webhooks, not bothering for now
         cfbot_cirrus.pull_build_results(conn)
 
-        # exchange data with the Commitfest app
+        cursor = conn.cursor()
+        cursor.execute("""SELECT COUNT(*)
+                        FROM branch
+                        WHERE status = 'testing'""")
+        row = cursor.fetchone()
 
-        workflow = cfbot_commitfest_rpc.get_commitfest_workflow()
-        for bucket in ["open", "inprogress", "parked"]:
-            if workflow[bucket]["id"]:
-                cfid = workflow[bucket]["id"]
-                logging.info(
-                    "pulling submissions for %s commitfest %d" % (bucket, cfid)
-                )
-                cfbot_commitfest.pull_submissions(conn, cfid)
-
-        if workflow["inprogress"]["id"]:
-            commitfest_id = workflow["inprogress"]["id"]
+        if row and row[0] >= cfbot_config.CONCURRENT_BUILDS:
+            cfbot_util.gc(conn)
+            return
         else:
-            # An open commitfest is supposed to exist at all times.
-            commitfest_id = workflow["open"]["id"]
-
-        # scrape thread data
-        logging.info("pulling modified threads")
-        cfbot_commitfest.pull_modified_threads(conn)
-
-        # build one patch, if it is time for that
-        cfbot_patch.maybe_process_one(conn, commitfest_id)
-
-        # rebuild a new set of web pages
-        submissions = cfbot_web.load_submissions(conn, commitfest_id)
-        for bucket in ["open", "inprogress", "parked"]:
-            if workflow[bucket]["id"]:
-                cfid = workflow[bucket]["id"]
-                cfbot_web.rebuild(conn, cfid, bucket, submissions)
-        cfbot_web.rebuild_authors(conn, submissions)
-
-        # garbage collect old build results
-        cfbot_util.gc(conn)
-
+            patch = cfbot_commitfest_rpc.get_next_patch()
+            cfbot_patch.process_patch(conn, patch)
 
 if __name__ == "__main__":
     # don't run if we're already running
