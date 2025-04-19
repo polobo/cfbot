@@ -98,7 +98,7 @@ def get_task_results(commit):
         return get_tasks_for_build(build)
     return []
 
-
+# XXX: major refactor needed to move SQL out of the flow
 def pull_build_results(conn):
     cursor = conn.cursor()
     cursor.execute("""SELECT id,
@@ -122,7 +122,7 @@ def pull_build_results(conn):
             continue
         position = 0
         posted_at_least_one_task_status = False
-        for task in get_task_results(commit_id):
+        for task in tasks:
             task_still_running = False
             position += 1
             task_id = task["id"]

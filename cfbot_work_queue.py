@@ -389,6 +389,7 @@ def fetch_task_artifacts(conn, task_id):
         artifacts_to_fetch = cursor.fetchall()
 
     for name, path in artifacts_to_fetch:
+        # XXX: should be in cfbot_cirrus.py returning log/body for update
         url = "https://api.cirrus-ci.com/v1/artifact/task/%s/%s/%s" % (
             task_id,
             name,

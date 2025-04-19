@@ -304,16 +304,36 @@ def update_submission(conn, message_id, commit_id, commitfest_id, submission_id)
         (message_id, message_id, commit_id, commitfest_id, submission_id),
     )
 
-
+# XXX: Pass in a Class implementing a PatchBurner interface
+# It handles its own logging
+# clone # sure, the patchburner may optimize this step, but it is what conceptually happens
+# load_patchset
+# get_base_commit_id
+# get_work_commit_id
+# needs_content # do i need to be supplied content or can i retrieve it myself with info handed to me?
+# is_incremental # is it ok use the incremental api instead of the bulk api?
+# (T, F) apply_patchset # done providing all content
+# ----- All these require apply_patchset to have been called
+# get_log_location # a public URL, local file, None, or memory
+# get_log_content # returns the content; must be called to get content for "memory"
+# ----- compute pre-merge-commit
+# get_patchset_metadata # ... list(commit_id, additions, deletions)
+# ----- compute post-merge-commit
+# get_all_additions # ...
+# get_all_deletions # ...
+# ----- decide whether to push to remote, and request PB try (it may object or fail...)
+# send_to_remote / try-catch interface for sure, though what to do on failure?
+# Apparently this all must pass or whatever CI we have will be unable to find
+# the repo to clone/run the tests against.
+# apply_patchset is a better name
 def process_patch(conn, patch, force_success=False):
     template_repo_path = patchburner_ctl("template-repo-path").strip()
     burner_repo_path = patchburner_ctl("burner-repo-path").strip()
     patch_dir = patchburner_ctl("burner-patch-path").strip()
     if force_success:
-        commit_id = None
+        commit_id = 'master-head-commit-for-patchset'
     else:
-        commit_id = get_commit_id(template_repo_path)
-        update_patchbase_tree(template_repo_path)
+        commit_id = update_patchbase_tree(template_repo_path)
         patchburner_ctl("destroy")
         patchburner_ctl("create")
 
@@ -323,6 +343,9 @@ def process_patch(conn, patch, force_success=False):
     version = None
     for file in patch.attachments:
         if not version and re.match(r"[vV]\d+-", file.filename):
+            # move version info up the stack, pgarchives with is_patch is ok
+            # but ultimately cfapp will end up with duplicate logic or
+            # just be the source during ingestion.
             version = file.filename.split("-")[0]
         if force_success:
             content = cfbot_config.get_fetcher()(patch.message_id, file.filename)
@@ -332,17 +355,21 @@ def process_patch(conn, patch, force_success=False):
             with open(dest, "wb+") as f:
                 f.write(cfbot_config.get_fetcher()(file.message_id, file.filename))
 
-
+    # needs content and incremental checks in the above loop.
+    # the current code seems to assume needs content and not incremental
     cursor = conn.cursor()
 
     if force_success:
         branch, output, rcode = (None, "Mock Output", 0)
     else:
         # we applied the patch; now make it into a branch with a commit on it
+        # XXX: make it a bit more clear this is our lookup code in cirrus ci
+        # Or, rather, try to make it not matter.
         branch = make_branch(burner_repo_path, patch.patch_id)
         # apply the patches inside the jail
         output, rcode = patchburner_ctl("apply", want_rcode=True)
 
+    # XXX: apply_patchset will perform this logging
     # write the patch output to a public log file
     log_file = f"patch_{patch.patch_id}.log"
     with open(os.path.join(cfbot_config.WEB_ROOT, log_file), "w+") as f:
@@ -387,20 +414,20 @@ def process_patch(conn, patch, force_success=False):
             all_additions, all_deletions = 1, 1
         else:
             # we committed the patches; now add a final merge commit with some metadata
+            # XXX: happens within apply_patchset
             add_merge_commit(
                 conn, burner_repo_path, None, patch.patch_id, patch.message_id, version
             )
+            first_additions, first_deletions = git_shortstat(
+                burner_repo_path, first_commit
+            )
+            all_additions, all_deletions = git_shortstat(burner_repo_path, "HEAD")
 
-            if commit_count > 0:
-                first_additions, first_deletions = git_shortstat(
-                    burner_repo_path, first_commit
-                )
-                all_additions, all_deletions = git_shortstat(burner_repo_path, "HEAD")
-            else:
-                first_additions, first_deletions = 0, 0
-                all_additions, all_deletions = 0, 0
 
         # push it to the remote monitored repo, if configured
+        # XXX: figure out whether to configure patchburner class with
+        # remote knowledge or whether to have at expose an API that
+        # a RemoteRepo class could program to.  Probably the former.
         if cfbot_config.GIT_REMOTE_NAME:
             logging.info("pushing branch %s" % branch)
             my_env = os.environ.copy()
@@ -418,6 +445,7 @@ def process_patch(conn, patch, force_success=False):
         else:
             ci_commit_id = get_commit_id(burner_repo_path)
 
+        # XXX: creates a branch that is a awating "testing" (status)
         cursor.execute(
             """INSERT INTO branch (commitfest_id, submission_id, commit_id, status, url, created, modified, version, patch_count, first_additions, first_deletions, all_additions, all_deletions) VALUES (%s, %s, %s, 'testing', %s, now(), now(), %s, %s, %s, %s, %s, %s) RETURNING id""",
             (
@@ -589,6 +617,11 @@ def process_submission(conn, commitfest_id, submission_id):
     # we'll leave it around so that we can see the results of patch apply.
     # Also if we're in a dev environment let's keep it around on failure to make
     # debugging easier.
+    # XXX: seems misleading, the apply already happened...all that is left
+    # to do is build and test it.  Which we enqueued by virtue of pushing the
+    # branch to the remote.  Cirrus_CI automatically picks up the branch
+    # and runs the tests per the repo configuration.  The "testing" status
+    # is continually polled in the cfbot_cirrus.py code.
     if cfbot_config.GIT_REMOTE_NAME and (cfbot_config.PRODUCTION or rcode == 0):
         patchburner_ctl("destroy")
 

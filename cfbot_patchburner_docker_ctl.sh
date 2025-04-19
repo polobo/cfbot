@@ -24,7 +24,7 @@ usage() {
 
 init_template() {
 	# This is just a clean checkout of the git repo, which cfbot will keep
-	# updated, and we'll copy whever we need a throw-away copy to apply patches
+	# updated, and we'll copy whenever we need a throw-away copy to apply patches
 	# to.  This just avoids having to clone it every time, which would suck.
 	# You should only need to init once.
 	mkdir $TEMPLATE_DIR
